@@ -7,3 +7,5 @@ https://blog.molecular-matters.com/2015/09/08/job-system-2-0-lock-free-work-stea
 https://blog.molecular-matters.com/2015/09/25/job-system-2-0-lock-free-work-stealing-part-3-going-lock-free/
 https://blog.molecular-matters.com/2015/11/09/job-system-2-0-lock-free-work-stealing-part-4-parallel_for/
 https://blog.molecular-matters.com/2016/04/04/job-system-2-0-lock-free-work-stealing-part-5-dependencies/
+
+gcc -pthread -I. src/jobsystem.c main.c
