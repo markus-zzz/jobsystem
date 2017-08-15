@@ -1,3 +1,5 @@
+#pragma once
+
 #include "jobsystem.h"
 #include <pthread.h>
 

@@ -71,9 +71,11 @@ GetJob(JobSystem_WorkerContext *jswc)
 static void
 Finish(JobSystem_WorkerContext *jswc, JobSystem_Job *job)
 {
-	__atomic_fetch_sub(&job->unfinishedJobs, 1, __ATOMIC_SEQ_CST);
-	if (job->parent) {
-		__atomic_fetch_sub(&job->parent->unfinishedJobs, 1, __ATOMIC_SEQ_CST);
+	int32_t tmp = __atomic_sub_fetch(&job->unfinishedJobs, 1, __ATOMIC_SEQ_CST);
+	if (tmp == 0) {
+		if (job->parent) {
+			Finish(jswc, job->parent);
+		}
 	}
 }
 
