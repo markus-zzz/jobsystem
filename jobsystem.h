@@ -2,6 +2,12 @@
 
 #include <stdint.h>
 
+#define JOBSYSTEM_JOB(x) JOBSYSTEM_JOBID_##x,
+typedef enum JobSystem_JobFunctionId {
+#include "jobs.def"
+} JobSystem_JobFunctionId;
+#undef JOBSYSTEM_JOB
+
 struct JobSystem_Context;
 struct JobSystem_WorkerContext;
 struct JobSystem_Job;
@@ -20,13 +26,17 @@ void
 JobSystem_Destroy(JobSystem_Context *jsc);
 
 JobSystem_Job *
-JobSystem_CreateJob(JobSystem_WorkerContext *jswc, JobSystem_JobFunction func);
+JobSystem_CreateJob(JobSystem_WorkerContext *jswc, JobSystem_JobFunctionId jfid);
 
 JobSystem_Job *
-JobSystem_CreateChildJob(JobSystem_WorkerContext *jswc, JobSystem_Job *parent, JobSystem_JobFunction func);
+JobSystem_CreateChildJob(JobSystem_WorkerContext *jswc, JobSystem_Job *parent, JobSystem_JobFunctionId jfid);
 
 void
 JobSystem_SubmitJob(JobSystem_WorkerContext *jswc, JobSystem_Job *job, void *data, uint32_t datasize);
 
 void
 JobSystem_WaitJob(JobSystem_WorkerContext *jswc, JobSystem_Job *job);
+
+#define JOBSYSTEM_JOB(x) void x(JobSystem_WorkerContext *jswc, JobSystem_Job*, const void*);
+#include "jobs.def"
+#undef JOBSYSTEM_JOB

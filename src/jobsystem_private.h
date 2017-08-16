@@ -7,9 +7,9 @@
 #define JOB_POOL_SIZE 4096
 
 struct JobSystem_Job {
-	JobSystem_JobFunction function;
-	JobSystem_Job* parent;
 	int32_t unfinishedJobs; // atomic
+	uint16_t jobFunctionId;
+	JobSystem_Job* parent;
 	char padding[5];
 };
 

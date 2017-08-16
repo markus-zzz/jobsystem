@@ -1,6 +1,19 @@
 #include "src/jobsystem_private.h"
 #include <sched.h>
 #include <stdlib.h>
+#include <stdio.h>
+
+#define JOBSYSTEM_JOB(x) x,
+static const JobSystem_JobFunction JobFunctionId2JobFunction[] = {
+#include "jobs.def"
+};
+#undef JOBSYSTEM_JOB
+
+#define JOBSYSTEM_JOB(x) #x,
+static const char *JobFunctionId2Str[] = {
+#include "jobs.def"
+};
+#undef JOBSYSTEM_JOB
 
 //
 // work queue
@@ -82,8 +95,10 @@ Finish(JobSystem_WorkerContext *jswc, JobSystem_Job *job)
 static void
 Execute(JobSystem_WorkerContext *jswc, JobSystem_Job *job)
 {
-	/* typedef void (*JobSystem_JobFunction)(JobSystem_WorkerContext *jswc, JobSystem_Job*, const void*); */
-	job->function(jswc, job, job->padding);
+	JobSystem_JobFunction jf = JobFunctionId2JobFunction[job->jobFunctionId];
+	printf("Worker #%d begin '%s'\n", jswc->worker_idx, JobFunctionId2Str[job->jobFunctionId]);
+	jf(jswc, job, job->padding);
+	printf("Worker #%d end '%s'\n", jswc->worker_idx, JobFunctionId2Str[job->jobFunctionId]);
 	Finish(jswc, job);
 }
 
@@ -133,10 +148,10 @@ JobSystem_Destroy(JobSystem_Context *jsc)
 }
 
 JobSystem_Job *
-JobSystem_CreateJob(JobSystem_WorkerContext *jswc, JobSystem_JobFunction func)
+JobSystem_CreateJob(JobSystem_WorkerContext *jswc, JobSystem_JobFunctionId jfid)
 {
 	JobSystem_Job *job = &jswc->job_pool[jswc->job_pool_idx++];
-	job->function = func;
+	job->jobFunctionId = jfid;
 	job->parent = NULL;
 	job->unfinishedJobs = 1;
 
@@ -144,12 +159,12 @@ JobSystem_CreateJob(JobSystem_WorkerContext *jswc, JobSystem_JobFunction func)
 }
 
 JobSystem_Job *
-JobSystem_CreateChildJob(JobSystem_WorkerContext *jswc, JobSystem_Job *parent, JobSystem_JobFunction func)
+JobSystem_CreateChildJob(JobSystem_WorkerContext *jswc, JobSystem_Job *parent, JobSystem_JobFunctionId jfid)
 {
 	__atomic_fetch_add(&parent->unfinishedJobs, 1, __ATOMIC_SEQ_CST);
 
 	JobSystem_Job *job = &jswc->job_pool[jswc->job_pool_idx++];
-	job->function = func;
+	job->jobFunctionId = jfid;
 	job->parent = parent;
 	job->unfinishedJobs = 1;
 
