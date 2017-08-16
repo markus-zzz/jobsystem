@@ -5,7 +5,7 @@
 
 void foobar(JobSystem_WorkerContext *jswc, JobSystem_Job *job, const void *arg)
 {
-	printf("This is jobf0 (%lu)\n", pthread_self());
+	for (volatile int i = 0; i < 1024; i++);
 }
 
 int main(int argc, char **argv)
@@ -21,6 +21,8 @@ int main(int argc, char **argv)
 
 	JobSystem_SubmitJob(jswc, root, NULL, 0);
 	JobSystem_WaitJob(jswc, root);
+
+	JobSystem_DumpTrace(jswc, "trace.json");
 
 	return 0;
 }

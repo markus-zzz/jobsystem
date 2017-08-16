@@ -2,6 +2,7 @@
 
 #include "jobsystem.h"
 #include <pthread.h>
+#include <time.h>
 
 #define JOB_QUEUE_SIZE 4096
 #define JOB_POOL_SIZE 4096
@@ -9,6 +10,14 @@
 #define JOB_DATA_SIZE 20
 
 #define JOB_ID_NULL 0xffffu
+
+#define JOB_TRACE_SIZE 1024
+
+struct JobSystem_TraceEvent {
+	struct timespec ts;
+	uint16_t jobFunctionId;
+	uint8_t kind;
+};
 
 struct JobSystem_Job {
 	int32_t unfinishedJobs; /* atomic */
@@ -38,5 +47,8 @@ struct JobSystem_WorkerContext {
 	struct JobSystem_Job *job_pool;
 	uint32_t job_pool_idx;
 	uint32_t worker_idx;
+	struct JobSystem_TraceEvent jobTrace[JOB_TRACE_SIZE];
+	uint32_t job_trace_idx;
 };
+
 

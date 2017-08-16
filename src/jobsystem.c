@@ -115,12 +115,21 @@ Finish(JobSystem_WorkerContext *jswc, JobSystem_Job *job)
 }
 
 static void
+Trace(JobSystem_WorkerContext *jswc, JobSystem_Job *job, uint8_t kind)
+{
+	struct JobSystem_TraceEvent *te = &jswc->jobTrace[jswc->job_trace_idx++ & (JOB_TRACE_SIZE - 1)];
+	clock_gettime(CLOCK_MONOTONIC, &te->ts);
+	te->kind = kind;
+	te->jobFunctionId = job->jobFunctionId;
+}
+
+static void
 Execute(JobSystem_WorkerContext *jswc, JobSystem_Job *job)
 {
 	JobSystem_JobFunction jf = JobFunctionId2JobFunction[job->jobFunctionId];
-	printf("Worker #%d begin '%s'\n", jswc->worker_idx, JobFunctionId2Str[job->jobFunctionId]);
+	Trace(jswc, job, 1);
 	jf(jswc, job, job->data);
-	printf("Worker #%d end '%s'\n", jswc->worker_idx, JobFunctionId2Str[job->jobFunctionId]);
+	Trace(jswc, job, 2);
 	Finish(jswc, job);
 }
 
@@ -219,4 +228,23 @@ JobSystem_WaitJob(JobSystem_WorkerContext *jswc, JobSystem_JobId jobId)
 			Execute(jswc, nextJob);
 		}
 	}
+}
+
+void
+JobSystem_DumpTrace(JobSystem_WorkerContext *jswc, const char *path)
+{
+	JobSystem_Context *jsc = jswc->jsc;
+	FILE *fp = fopen(path, "w");
+
+	fprintf(fp, "{\"traceEvents\":[\n");
+	for (uint16_t i = 0; i < jsc->n_workers; i++) {
+		for (uint32_t j = 0; j < jsc->jswc[i].job_trace_idx; j++) {
+			struct JobSystem_TraceEvent *te = &jsc->jswc[i].jobTrace[j];
+			uint64_t ts_in_us = te->ts.tv_sec * 1000000 + te->ts.tv_nsec / 1000;
+			fprintf(fp, "{\"pid\":3890,\"tid\":%d,\"ts\":%lu,\"ph\":\"%c\",\"cat\":\"blink\",\"name\":\"%s\"},\n", i, ts_in_us, te->kind == 1 ? 'B' : 'E', JobFunctionId2Str[te->jobFunctionId]);
+		}
+	}
+	fprintf(fp, "]}\n");
+
+	fclose(fp);
 }

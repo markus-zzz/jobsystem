@@ -38,6 +38,9 @@ JobSystem_SubmitJob(JobSystem_WorkerContext *jswc, JobSystem_JobId jobId, void *
 void
 JobSystem_WaitJob(JobSystem_WorkerContext *jswc, JobSystem_JobId jobId);
 
+void
+JobSystem_DumpTrace(JobSystem_WorkerContext *jswc, const char *path);
+
 #define JOBSYSTEM_JOB(x) void x(JobSystem_WorkerContext *jswc, JobSystem_Job*, const void*);
 #include "jobs.def"
 #undef JOBSYSTEM_JOB
