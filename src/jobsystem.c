@@ -1,4 +1,5 @@
 #include "src/jobsystem_private.h"
+#include <assert.h>
 #include <sched.h>
 #include <stdlib.h>
 #include <stdio.h>
@@ -14,6 +15,26 @@ static const char *JobFunctionId2Str[] = {
 #include "jobs.def"
 };
 #undef JOBSYSTEM_JOB
+
+JobSystem_Job *JobId2Job(JobSystem_Context *jsc, JobSystem_JobId id)
+{
+	JobSystem_Job *job = NULL;
+	if (id != JOB_ID_NULL) {
+		uint32_t widx = id >> 12;
+		uint32_t jidx = id & (JOB_POOL_SIZE - 1);
+		assert(widx < jsc->n_workers);
+		job = &jsc->job_pools[widx*JOB_POOL_SIZE + jidx];
+	}
+	return job;
+}
+
+
+JobSystem_Job *AllocateJob(JobSystem_WorkerContext *jswc, JobSystem_JobId *jobId)
+{
+	uint16_t tmp = jswc->job_pool_idx++;
+	*jobId = tmp | (jswc->worker_idx << 12);
+	return &jswc->job_pool[jswc->worker_idx*JOB_POOL_SIZE + tmp];
+}
 
 //
 // work queue
@@ -63,7 +84,7 @@ queue_steal(struct WorkStealingQueue *queue)
 static JobSystem_Job *
 GetJob(JobSystem_WorkerContext *jswc)
 {
-	struct WorkStealingQueue *ourQueue = &jswc->jsc->queues[jswc->worker_idx];
+	struct WorkStealingQueue *ourQueue = jswc->queue;
 
 	JobSystem_Job *job = queue_pop(ourQueue);
 	if (!job)
@@ -86,8 +107,9 @@ Finish(JobSystem_WorkerContext *jswc, JobSystem_Job *job)
 {
 	int32_t tmp = __atomic_sub_fetch(&job->unfinishedJobs, 1, __ATOMIC_SEQ_CST);
 	if (tmp == 0) {
-		if (job->parent) {
-			Finish(jswc, job->parent);
+		JobSystem_Job *parent = JobId2Job(jswc->jsc, job->parentJobId);
+		if (parent) {
+			Finish(jswc, parent);
 		}
 	}
 }
@@ -97,7 +119,7 @@ Execute(JobSystem_WorkerContext *jswc, JobSystem_Job *job)
 {
 	JobSystem_JobFunction jf = JobFunctionId2JobFunction[job->jobFunctionId];
 	printf("Worker #%d begin '%s'\n", jswc->worker_idx, JobFunctionId2Str[job->jobFunctionId]);
-	jf(jswc, job, job->padding);
+	jf(jswc, job, job->data);
 	printf("Worker #%d end '%s'\n", jswc->worker_idx, JobFunctionId2Str[job->jobFunctionId]);
 	Finish(jswc, job);
 }
@@ -121,20 +143,25 @@ worker_thread_entry_point(void *arg)
 
 
 JobSystem_WorkerContext *
-JobSystem_Create(uint32_t n_workers)
+JobSystem_Create(uint16_t n_workers)
 {
+	assert(sizeof(struct JobSystem_Job) == 64);
+
 	JobSystem_Context *jsc = calloc(sizeof(JobSystem_Context), 1);
 	jsc->queues = calloc(sizeof(struct WorkStealingQueue), n_workers);
+	jsc->job_pools = calloc(sizeof(struct JobSystem_Job), n_workers*JOB_POOL_SIZE);
 	jsc->n_workers = n_workers;
 
 	jsc->jswc = calloc(sizeof(JobSystem_WorkerContext), n_workers);
-	for (uint32_t i = 0; i < n_workers; i++) {
+	for (uint16_t i = 0; i < n_workers; i++) {
 		jsc->jswc[i].jsc = jsc;
 		jsc->jswc[i].worker_idx = i;
 		jsc->jswc[i].job_pool_idx = 0;
+		jsc->jswc[i].queue = &jsc->queues[i];
+		jsc->jswc[i].job_pool = &jsc->job_pools[i * JOB_POOL_SIZE];
 	}
 
-	for (uint32_t i = 1; i < n_workers; i++) {
+	for (uint16_t i = 1; i < n_workers; i++) {
 		pthread_t thread_id;
 		pthread_create(&thread_id, NULL, &worker_thread_entry_point, &jsc->jswc[i]);
 	}
@@ -147,40 +174,45 @@ JobSystem_Destroy(JobSystem_Context *jsc)
 {
 }
 
-JobSystem_Job *
+JobSystem_JobId
 JobSystem_CreateJob(JobSystem_WorkerContext *jswc, JobSystem_JobFunctionId jfid)
 {
-	JobSystem_Job *job = &jswc->job_pool[jswc->job_pool_idx++];
+	JobSystem_JobId jobId;
+	JobSystem_Job *job = AllocateJob(jswc, &jobId);
 	job->jobFunctionId = jfid;
-	job->parent = NULL;
+	job->parentJobId = JOB_ID_NULL;
 	job->unfinishedJobs = 1;
 
-	return job;
+	return jobId;
 }
 
-JobSystem_Job *
-JobSystem_CreateChildJob(JobSystem_WorkerContext *jswc, JobSystem_Job *parent, JobSystem_JobFunctionId jfid)
+JobSystem_JobId
+JobSystem_CreateChildJob(JobSystem_WorkerContext *jswc, JobSystem_JobId parentJobId, JobSystem_JobFunctionId jfid)
 {
+	JobSystem_Job *parent = JobId2Job(jswc->jsc, parentJobId);
 	__atomic_fetch_add(&parent->unfinishedJobs, 1, __ATOMIC_SEQ_CST);
 
-	JobSystem_Job *job = &jswc->job_pool[jswc->job_pool_idx++];
+	JobSystem_JobId jobId;
+	JobSystem_Job *job = AllocateJob(jswc, &jobId);
 	job->jobFunctionId = jfid;
-	job->parent = parent;
+	job->parentJobId = parentJobId;
 	job->unfinishedJobs = 1;
 
-	return job;
+	return jobId;
 }
 
 void
-JobSystem_SubmitJob(JobSystem_WorkerContext *jswc, JobSystem_Job *job, void *data, uint32_t datasize)
+JobSystem_SubmitJob(JobSystem_WorkerContext *jswc, JobSystem_JobId jobId, void *data, uint32_t datasize)
 {
-	struct WorkStealingQueue *queue = &jswc->jsc->queues[jswc->worker_idx];
-	queue_push(queue, job);
+	JobSystem_Job *job = JobId2Job(jswc->jsc, jobId);
+	queue_push(jswc->queue, job);
 }
 
 void
-JobSystem_WaitJob(JobSystem_WorkerContext *jswc, JobSystem_Job *job)
+JobSystem_WaitJob(JobSystem_WorkerContext *jswc, JobSystem_JobId jobId)
 {
+	JobSystem_Job *job = JobId2Job(jswc->jsc, jobId);
+
 	while (__atomic_load_n (&job->unfinishedJobs, __ATOMIC_SEQ_CST) > 0) {
 		JobSystem_Job *nextJob = GetJob(jswc);
 		if (nextJob) {

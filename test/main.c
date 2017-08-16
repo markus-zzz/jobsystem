@@ -12,10 +12,10 @@ int main(int argc, char **argv)
 {
 	JobSystem_WorkerContext *jswc = JobSystem_Create(4);
 
-	JobSystem_Job *root = JobSystem_CreateJob(jswc, JOBSYSTEM_JOBID_foobar);
+	JobSystem_JobId root = JobSystem_CreateJob(jswc, JOBSYSTEM_JOBID_foobar);
 
 	for (unsigned i = 0; i < 128; i++) {
-		JobSystem_Job *job0 = JobSystem_CreateChildJob(jswc, root, JOBSYSTEM_JOBID_foobar);
+		JobSystem_JobId job0 = JobSystem_CreateChildJob(jswc, root, JOBSYSTEM_JOBID_foobar);
 		JobSystem_SubmitJob(jswc, job0, NULL, 0);
 	}
 

@@ -5,12 +5,18 @@
 
 #define JOB_QUEUE_SIZE 4096
 #define JOB_POOL_SIZE 4096
+#define JOB_CONT_SIZE 16
+#define JOB_DATA_SIZE 20
+
+#define JOB_ID_NULL 0xffffu
 
 struct JobSystem_Job {
-	int32_t unfinishedJobs; // atomic
+	int32_t unfinishedJobs; /* atomic */
+	int32_t continuationCount; /* atomic */
 	uint16_t jobFunctionId;
-	JobSystem_Job* parent;
-	char padding[5];
+	uint16_t parentJobId;
+	uint16_t continuations[JOB_CONT_SIZE];
+	uint8_t data[JOB_DATA_SIZE];
 };
 
 struct WorkStealingQueue {
@@ -22,12 +28,14 @@ struct WorkStealingQueue {
 struct JobSystem_Context {
 	struct WorkStealingQueue *queues;
 	struct JobSystem_WorkerContext *jswc;
-	uint32_t n_workers;
+	struct JobSystem_Job *job_pools;
+	uint16_t n_workers;
 };
 
 struct JobSystem_WorkerContext {
 	struct JobSystem_Context *jsc;
-	struct JobSystem_Job job_pool[JOB_POOL_SIZE];
+	struct WorkStealingQueue *queue;
+	struct JobSystem_Job *job_pool;
 	uint32_t job_pool_idx;
 	uint32_t worker_idx;
 };
