@@ -10,7 +10,7 @@ void foobar(JobSystem_WorkerContext *jswc, JobSystem_Job *job, const void *arg)
 
 int main(int argc, char **argv)
 {
-	JobSystem_WorkerContext *jswc = JobSystem_Create(4);
+	JobSystem_WorkerContext *jswc = JobSystem_StartUp(4);
 
 	JobSystem_JobId root = JobSystem_CreateJob(jswc, JOBSYSTEM_JOBID_foobar);
 
@@ -20,9 +20,11 @@ int main(int argc, char **argv)
 	}
 
 	JobSystem_SubmitJob(jswc, root, NULL, 0);
-	JobSystem_WaitJob(jswc, root);
 
+	JobSystem_WaitJob(jswc, root);
+	JobSystem_Reset(jswc);
 	JobSystem_DumpTrace(jswc, "trace.json");
+	JobSystem_ShutDown(jswc);
 
 	return 0;
 }

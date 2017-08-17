@@ -21,10 +21,10 @@ typedef void (*JobSystem_JobFunction)(JobSystem_WorkerContext *jswc, JobSystem_J
 
 
 JobSystem_WorkerContext *
-JobSystem_Create(uint16_t n_workers);
+JobSystem_StartUp(uint16_t n_workers);
 
 void
-JobSystem_Destroy(JobSystem_Context *jsc);
+JobSystem_ShutDown(JobSystem_WorkerContext *jswc);
 
 JobSystem_JobId
 JobSystem_CreateJob(JobSystem_WorkerContext *jswc, JobSystem_JobFunctionId jfid);
@@ -37,6 +37,9 @@ JobSystem_SubmitJob(JobSystem_WorkerContext *jswc, JobSystem_JobId jobId, void *
 
 void
 JobSystem_WaitJob(JobSystem_WorkerContext *jswc, JobSystem_JobId jobId);
+
+void
+JobSystem_Reset(JobSystem_WorkerContext *jswc);
 
 void
 JobSystem_DumpTrace(JobSystem_WorkerContext *jswc, const char *path);

@@ -11,13 +11,14 @@
 
 #define JOB_ID_NULL 0xffffu
 
+#if JOBSYSTEM_TRACE_ENABLE
 #define JOB_TRACE_SIZE 1024
-
 struct JobSystem_TraceEvent {
 	struct timespec ts;
 	uint16_t jobFunctionId;
 	uint8_t kind;
 };
+#endif
 
 struct JobSystem_Job {
 	int32_t unfinishedJobs; /* atomic */
@@ -35,20 +36,22 @@ struct WorkStealingQueue {
 };
 
 struct JobSystem_Context {
-	struct WorkStealingQueue *queues;
 	struct JobSystem_WorkerContext *jswc;
-	struct JobSystem_Job *job_pools;
 	uint16_t n_workers;
 };
 
 struct JobSystem_WorkerContext {
 	struct JobSystem_Context *jsc;
-	struct WorkStealingQueue *queue;
-	struct JobSystem_Job *job_pool;
+	struct WorkStealingQueue queue;
+	struct JobSystem_Job job_pool[JOB_POOL_SIZE];
 	uint32_t job_pool_idx;
 	uint32_t worker_idx;
+	pthread_t thread;
+	uint32_t shutDownWorker;
+#if JOBSYSTEM_TRACE_ENABLE
 	struct JobSystem_TraceEvent jobTrace[JOB_TRACE_SIZE];
 	uint32_t job_trace_idx;
+#endif
 };
 
 

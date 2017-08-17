@@ -23,7 +23,7 @@ JobSystem_Job *JobId2Job(JobSystem_Context *jsc, JobSystem_JobId id)
 		uint32_t widx = id >> 12;
 		uint32_t jidx = id & (JOB_POOL_SIZE - 1);
 		assert(widx < jsc->n_workers);
-		job = &jsc->job_pools[widx*JOB_POOL_SIZE + jidx];
+		job = &jsc->jswc[widx].job_pool[jidx];
 	}
 	return job;
 }
@@ -84,14 +84,14 @@ queue_steal(struct WorkStealingQueue *queue)
 static JobSystem_Job *
 GetJob(JobSystem_WorkerContext *jswc)
 {
-	struct WorkStealingQueue *ourQueue = jswc->queue;
+	struct WorkStealingQueue *ourQueue = &jswc->queue;
 
 	JobSystem_Job *job = queue_pop(ourQueue);
 	if (!job)
 	{
 		/* no job in our queue so resort to stealing */
 		unsigned int randomIndex = rand() % jswc->jsc->n_workers;
-		struct WorkStealingQueue *stealQueue = &jswc->jsc->queues[randomIndex];
+		struct WorkStealingQueue *stealQueue = &jswc->jsc->jswc[randomIndex].queue;
 		if (stealQueue != ourQueue)
 		{
 			/* only steal from others */
@@ -114,6 +114,7 @@ Finish(JobSystem_WorkerContext *jswc, JobSystem_Job *job)
 	}
 }
 
+#if JOBSYSTEM_TRACE_ENABLE
 static void
 Trace(JobSystem_WorkerContext *jswc, JobSystem_Job *job, uint8_t kind)
 {
@@ -122,14 +123,19 @@ Trace(JobSystem_WorkerContext *jswc, JobSystem_Job *job, uint8_t kind)
 	te->kind = kind;
 	te->jobFunctionId = job->jobFunctionId;
 }
+#endif
 
 static void
 Execute(JobSystem_WorkerContext *jswc, JobSystem_Job *job)
 {
 	JobSystem_JobFunction jf = JobFunctionId2JobFunction[job->jobFunctionId];
+#if JOBSYSTEM_TRACE_ENABLE
 	Trace(jswc, job, 1);
+#endif
 	jf(jswc, job, job->data);
+#if JOBSYSTEM_TRACE_ENABLE
 	Trace(jswc, job, 2);
+#endif
 	Finish(jswc, job);
 }
 
@@ -137,7 +143,7 @@ static void *
 worker_thread_entry_point(void *arg)
 {
 	JobSystem_WorkerContext *jswc = arg;
-	while (1) {
+	while (!jswc->shutDownWorker) {
 		JobSystem_Job *job = GetJob(jswc);
 		if (job) {
 			Execute(jswc, job);
@@ -152,35 +158,48 @@ worker_thread_entry_point(void *arg)
 
 
 JobSystem_WorkerContext *
-JobSystem_Create(uint16_t n_workers)
+JobSystem_StartUp(uint16_t n_workers)
 {
 	assert(sizeof(struct JobSystem_Job) == 64);
 
 	JobSystem_Context *jsc = calloc(sizeof(JobSystem_Context), 1);
-	jsc->queues = calloc(sizeof(struct WorkStealingQueue), n_workers);
-	jsc->job_pools = calloc(sizeof(struct JobSystem_Job), n_workers*JOB_POOL_SIZE);
 	jsc->n_workers = n_workers;
-
 	jsc->jswc = calloc(sizeof(JobSystem_WorkerContext), n_workers);
+
 	for (uint16_t i = 0; i < n_workers; i++) {
 		jsc->jswc[i].jsc = jsc;
 		jsc->jswc[i].worker_idx = i;
 		jsc->jswc[i].job_pool_idx = 0;
-		jsc->jswc[i].queue = &jsc->queues[i];
-		jsc->jswc[i].job_pool = &jsc->job_pools[i * JOB_POOL_SIZE];
 	}
 
 	for (uint16_t i = 1; i < n_workers; i++) {
-		pthread_t thread_id;
-		pthread_create(&thread_id, NULL, &worker_thread_entry_point, &jsc->jswc[i]);
+		pthread_create(&jsc->jswc[i].thread, NULL, &worker_thread_entry_point, &jsc->jswc[i]);
 	}
 
 	return &jsc->jswc[0];
 }
 
 void
-JobSystem_Destroy(JobSystem_Context *jsc)
+JobSystem_ShutDown(JobSystem_WorkerContext *jswc)
 {
+	assert(jswc->worker_idx == 0);
+	JobSystem_Context *jsc = jswc->jsc;
+	for (uint16_t i = 1; i < jsc->n_workers; i++) {
+		jsc->jswc[i].shutDownWorker = 1;
+		pthread_join(jsc->jswc[i].thread, NULL);
+	}
+
+	free(jsc->jswc);
+	free(jsc);
+}
+
+void
+JobSystem_Reset(JobSystem_WorkerContext *jswc)
+{
+	assert(jswc->worker_idx == 0);
+	for (uint16_t i = 0; i < jswc->jsc->n_workers; i++) {
+		jswc->jsc->jswc[i].job_pool_idx = 0;
+	}
 }
 
 JobSystem_JobId
@@ -214,12 +233,14 @@ void
 JobSystem_SubmitJob(JobSystem_WorkerContext *jswc, JobSystem_JobId jobId, void *data, uint32_t datasize)
 {
 	JobSystem_Job *job = JobId2Job(jswc->jsc, jobId);
-	queue_push(jswc->queue, job);
+	queue_push(&jswc->queue, job);
 }
 
 void
 JobSystem_WaitJob(JobSystem_WorkerContext *jswc, JobSystem_JobId jobId)
 {
+	assert(jswc->worker_idx == 0);
+
 	JobSystem_Job *job = JobId2Job(jswc->jsc, jobId);
 
 	while (__atomic_load_n (&job->unfinishedJobs, __ATOMIC_SEQ_CST) > 0) {
@@ -233,18 +254,23 @@ JobSystem_WaitJob(JobSystem_WorkerContext *jswc, JobSystem_JobId jobId)
 void
 JobSystem_DumpTrace(JobSystem_WorkerContext *jswc, const char *path)
 {
+#if JOBSYSTEM_TRACE_ENABLE
 	JobSystem_Context *jsc = jswc->jsc;
 	FILE *fp = fopen(path, "w");
 
-	fprintf(fp, "{\"traceEvents\":[\n");
+	fprintf(fp, "{\"traceEvents\":[");
 	for (uint16_t i = 0; i < jsc->n_workers; i++) {
 		for (uint32_t j = 0; j < jsc->jswc[i].job_trace_idx; j++) {
 			struct JobSystem_TraceEvent *te = &jsc->jswc[i].jobTrace[j];
 			uint64_t ts_in_us = te->ts.tv_sec * 1000000 + te->ts.tv_nsec / 1000;
-			fprintf(fp, "{\"pid\":3890,\"tid\":%d,\"ts\":%lu,\"ph\":\"%c\",\"cat\":\"blink\",\"name\":\"%s\"},\n", i, ts_in_us, te->kind == 1 ? 'B' : 'E', JobFunctionId2Str[te->jobFunctionId]);
+			if (i != 0 || j != 0) {
+				fprintf(fp, ",");
+			}
+			fprintf(fp, "\n{\"pid\":3890,\"tid\":%d,\"ts\":%lu,\"ph\":\"%c\",\"cat\":\"blink\",\"name\":\"%s\"}", i, ts_in_us, te->kind == 1 ? 'B' : 'E', JobFunctionId2Str[te->jobFunctionId]);
 		}
 	}
-	fprintf(fp, "]}\n");
+	fprintf(fp, "\n]}\n");
 
 	fclose(fp);
+#endif
 }
